@@ -39,7 +39,8 @@
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
-mod claude;\nmod portable;
+mod claude;
+mod portable;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -210,6 +211,7 @@ fn main() {
     // the deep-link plugin through the `deep-link` feature.
     let builder = tauri::Builder::default()
         .manage(claude::ClaudeState::default())
+        .manage(portable::PortableState::default())
         .invoke_handler(tauri::generate_handler![
             claude::claude_status,
             claude::claude_connect,
