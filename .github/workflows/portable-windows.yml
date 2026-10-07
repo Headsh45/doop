@@ -1,0 +1,154 @@
+name: Portable Windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'server/**'
+      - 'shared/**'
+      - 'src/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/actions/setup-desktop/**'
+      - '.github/workflows/portable-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: ./.github/actions/setup-desktop
+
+      - name: Install app dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web app
+        run: bun run build
+
+      - name: Build portable Tauri executable
+        working-directory: desktop
+        run: bunx tauri build --no-bundle
+
+      - name: Assemble portable directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $PWD 'portable-dist/DoopPortable'
+          $app = Join-Path $root 'app'
+          $runtime = Join-Path $root 'runtime'
+
+          New-Item -ItemType Directory -Force -Path $root, $app, $runtime | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $root 'data'), (Join-Path $root 'config'), (Join-Path $root 'logs') | Out-Null
+
+          $desktopExe = 'desktop/src-tauri/target/release/doop-desktop.exe'
+          if (-not (Test-Path $desktopExe)) {
+            throw "Tauri executable not found at $desktopExe"
+          }
+          Copy-Item $desktopExe (Join-Path $root 'DoopPortable.exe')
+
+          $bunExe = (Get-Command bun).Source
+          Copy-Item $bunExe (Join-Path $runtime 'bun.exe')
+
+          Copy-Item -Recurse 'dist' (Join-Path $app 'dist')
+          Copy-Item -Recurse 'server' (Join-Path $app 'server')
+          Copy-Item -Recurse 'shared' (Join-Path $app 'shared')
+          Copy-Item 'package.json' (Join-Path $app 'package.json')
+          Copy-Item 'bun.lock' (Join-Path $app 'bun.lock')
+          Copy-Item 'README-PORTABLE.md' (Join-Path $root 'README-PORTABLE.md')
+
+          Push-Location $app
+          try {
+            bun install --production --frozen-lockfile
+          } finally {
+            Pop-Location
+          }
+
+      - name: Smoke-check portable layout
+        shell: pwsh
+        run: |
+          $root = 'portable-dist/DoopPortable'
+          $required = @(
+            'DoopPortable.exe',
+            'runtime/bun.exe',
+            'app/dist/index.html',
+            'app/server/index.ts',
+            'app/server/db/migrations',
+            'app/shared',
+            'app/node_modules'
+          )
+          foreach ($entry in $required) {
+            $path = Join-Path $root $entry
+            if (-not (Test-Path $path)) {
+              throw "Portable artifact is incomplete: missing $entry"
+            }
+          }
+
+      - name: Smoke-test bundled local server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path 'portable-dist/DoopPortable').Path
+          $app = Join-Path $root 'app'
+          $bun = Join-Path $root 'runtime/bun.exe'
+          $data = Join-Path $root 'data'
+          $logs = Join-Path $root 'logs'
+          $stdout = Join-Path $logs 'ci-server.out.log'
+          $stderr = Join-Path $logs 'ci-server.err.log'
+
+          $env:NODE_ENV = 'production'
+          $env:HOST = '127.0.0.1'
+          $env:PORT = '4499'
+          $env:BETTER_AUTH_URL = 'http://127.0.0.1:4499'
+          $env:BETTER_AUTH_SECRET = 'doop-portable-ci-smoke-secret-32-bytes-minimum'
+          $env:DOOP_DATA_DIR = $data
+
+          $server = Start-Process -FilePath $bun -ArgumentList (Join-Path $app 'server/index.ts') -WorkingDirectory $app -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $healthy = $false
+
+          try {
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              if ($server.HasExited) {
+                break
+              }
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:4499/healthz' -TimeoutSec 2
+                if ($response.StatusCode -eq 200) {
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+
+            if (-not $healthy) {
+              Write-Host '--- portable server stdout ---'
+              if (Test-Path $stdout) { Get-Content $stdout }
+              Write-Host '--- portable server stderr ---'
+              if (Test-Path $stderr) { Get-Content $stderr }
+              throw 'Bundled portable server did not pass /healthz'
+            }
+          } finally {
+            if (-not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force
+              $server.WaitForExit()
+            }
+          }
+
+          Get-ChildItem $data -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+          Get-ChildItem $logs -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
+      - name: Create ZIP
+        shell: pwsh
+        run: Compress-Archive -Path 'portable-dist/DoopPortable' -DestinationPath 'DoopPortable-windows.zip' -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: DoopPortable-windows
+          path: DoopPortable-windows.zip
+          if-no-files-found: error

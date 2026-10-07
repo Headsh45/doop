@@ -40,6 +40,7 @@ use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
 mod claude;
+mod portable;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -210,6 +211,7 @@ fn main() {
     // the deep-link plugin through the `deep-link` feature.
     let builder = tauri::Builder::default()
         .manage(claude::ClaudeState::default())
+        .manage(portable::PortableState::default())
         .invoke_handler(tauri::generate_handler![
             claude::claude_status,
             claude::claude_connect,
@@ -251,12 +253,19 @@ fn main() {
             // only works installed; Windows and Linux can register at
             // runtime, which also makes `tauri dev` receive links.
             #[cfg(any(windows, target_os = "linux"))]
-            app.deep_link().register_all()?;
+            if cfg!(debug_assertions) {
+                app.deep_link().register_all()?;
+            }
             let focus_handle = app.handle().clone();
             app.deep_link().on_open_url(move |_event| focus_main_window(&focus_handle));
 
             let handle = app.handle().clone();
-            let entry = format!("{}/auth", base_url());
+            let local_base = if cfg!(debug_assertions) {
+                base_url()
+            } else {
+                portable::start(&app.state::<portable::PortableState>())?
+            };
+            let entry = format!("{}/auth", local_base);
             // Hosts that stay inside the shell; any other http(s) target opens
             // in the system browser. Hostless web schemes (about:, blob:) stay
             // in — sandboxed frame content depends on them — but mailto: and
@@ -276,10 +285,14 @@ fn main() {
             // tab strip; the version lets the app adapt to shell capabilities
             // (traffic-light inset arrived with the overlay title bar, 0.1.2)
             // and the platform tells it which window framing it lives under.
+            let local_cli_enabled = cfg!(debug_assertions);
             let desktop_marker = format!(
-                "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true;",
+                "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_CLAUDE_CLI__ = {}; window.__DOOP_CLAUDE_INSTALL__ = {}; window.__DOOP_PORTABLE__ = {};",
                 app.package_info().version,
-                std::env::consts::OS
+                std::env::consts::OS,
+                local_cli_enabled,
+                local_cli_enabled,
+                !cfg!(debug_assertions)
             );
             // macOS never reports the saved path on `Finished`, so remember
             // the destinations chosen on `Requested`, keyed by URL. The same
@@ -365,6 +378,7 @@ fn main() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 claude::shutdown(&app.state::<claude::ClaudeState>());
+                portable::shutdown(&app.state::<portable::PortableState>());
             }
         });
 }

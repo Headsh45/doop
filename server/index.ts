@@ -1879,7 +1879,7 @@ wss.on('connection', (ws, upgradeReq) => {
   })
 })
 
-server.listen(PORT, () => {
+server.listen(PORT, process.env.HOST || undefined, () => {
   console.log(`⟡ doop server     http://localhost:${PORT}`)
   console.log(`⟡ mcp endpoint      http://localhost:${PORT}/mcp`)
   console.log(`⟡ websocket         ws://localhost:${PORT}/ws`)

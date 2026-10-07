@@ -12,7 +12,8 @@ import type { S3Client } from '@aws-sdk/client-s3'
  */
 
 const BUCKET = process.env.BUCKET
-const DISK_DIR = path.join(process.cwd(), 'data', 'assets')
+const DATA_ROOT = process.env.DOOP_DATA_DIR || path.join(process.cwd(), 'data')
+const DISK_DIR = path.join(DATA_ROOT, 'assets')
 
 export const storageMode: 'bucket' | 'disk' = BUCKET ? 'bucket' : 'disk'
 
