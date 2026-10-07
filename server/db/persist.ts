@@ -848,7 +848,8 @@ export async function hydrate(): Promise<Hydrated> {
 
 /** One-time import of the pre-DB data/store.json so existing canvases survive. */
 export async function importLegacyJson(): Promise<Canvas[] | null> {
-  const dataRoot = process.env.DOOP_DATA_DIR || path.join(process.cwd(), 'data')\n  const file = path.join(dataRoot, 'store.json')
+  const dataRoot = process.env.DOOP_DATA_DIR || path.join(process.cwd(), 'data')
+  const file = path.join(dataRoot, 'store.json')
   let parsed: Canvas[]
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
