@@ -4,12 +4,7 @@
   "description": "Lets the Doop desktop shell use IPC from the hosted origin, local development, and the portable localhost server.",
   "windows": ["main"],
   "remote": {
-    "urls": [
-      "https://doop.design",
-      "https://www.doop.design",
-      "http://127.0.0.1:*",
-      "http://localhost:*"
-    ]
+    "urls": ["https://doop.design", "https://www.doop.design", "http://127.0.0.1:*", "http://localhost:*"]
   },
   "permissions": [
     "core:default",
