@@ -88,6 +88,61 @@ jobs:
             }
           }
 
+      - name: Smoke-test bundled local server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path 'portable-dist/DoopPortable').Path
+          $app = Join-Path $root 'app'
+          $bun = Join-Path $root 'runtime/bun.exe'
+          $data = Join-Path $root 'data'
+          $logs = Join-Path $root 'logs'
+          $stdout = Join-Path $logs 'ci-server.out.log'
+          $stderr = Join-Path $logs 'ci-server.err.log'
+
+          $env:NODE_ENV = 'production'
+          $env:HOST = '127.0.0.1'
+          $env:PORT = '4499'
+          $env:BETTER_AUTH_URL = 'http://127.0.0.1:4499'
+          $env:BETTER_AUTH_SECRET = 'doop-portable-ci-smoke-secret-32-bytes-minimum'
+          $env:DOOP_DATA_DIR = $data
+
+          $server = Start-Process -FilePath $bun -ArgumentList (Join-Path $app 'server/index.ts') -WorkingDirectory $app -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $healthy = $false
+
+          try {
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              if ($server.HasExited) {
+                break
+              }
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:4499/healthz' -TimeoutSec 2
+                if ($response.StatusCode -eq 200) {
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+
+            if (-not $healthy) {
+              Write-Host '--- portable server stdout ---'
+              if (Test-Path $stdout) { Get-Content $stdout }
+              Write-Host '--- portable server stderr ---'
+              if (Test-Path $stderr) { Get-Content $stderr }
+              throw 'Bundled portable server did not pass /healthz'
+            }
+          } finally {
+            if (-not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force
+              $server.WaitForExit()
+            }
+          }
+
+          Get-ChildItem $data -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+          Get-ChildItem $logs -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
       - name: Create ZIP
         shell: pwsh
         run: Compress-Archive -Path 'portable-dist/DoopPortable' -DestinationPath 'DoopPortable-windows.zip' -CompressionLevel Optimal
